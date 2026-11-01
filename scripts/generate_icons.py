@@ -1,145 +1,85 @@
 #!/usr/bin/env python3
-"""Generate a pixel-art squirrel app icon and in-app logo for 松鼠相册整理.
+"""Generate the app icon and in-app logo from the approved squirrel artwork."""
 
-Style: hand-authored 16x16 pixel sprite, upscaled with NEAREST so every pixel
-      stays a crisp square (no blending, no anti-aliasing).
-Pose: side profile facing RIGHT — head, single eye and nose on the right,
-      big bushy tail arcing up on the left.
-Outputs land in the same asset paths, so the Xcode project needs no changes.
-
-Swift must render these with .interpolation(.none) or the pixels get blurred.
-"""
-
+import colorsys
 import json
-import os
+from collections import deque
+from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ASSETS = os.path.normpath(os.path.join(HERE, "..", "PhotoClear", "Assets.xcassets"))
-
-GRID = 16
-
-# palette: character -> RGBA
-PALETTE = {
-    ".": (0, 0, 0, 0),            # transparent
-    "O": (70, 36, 20, 255),       # outline
-    "B": (224, 138, 62, 255),     # body
-    "D": (190, 106, 44, 255),     # body shading
-    "C": (252, 238, 208, 255),    # cream belly / cheek
-    "E": (48, 28, 16, 255),       # eye
-    "W": (255, 253, 246, 255),    # eye shine
-    "N": (60, 32, 20, 255),       # nose
-    "A": (228, 178, 98, 255),     # acorn nut
-    "a": (150, 96, 48, 255),      # acorn cap
-}
-
-# 16x16 side-view squirrel facing right: head/eye/nose on the right,
-# bushy tail sweeping up on the left.
-SPRITE = [
-    "................",
-    "..........OOOO..",
-    ".........OBBBBO.",
-    "........OBBBBBBO",
-    "...OO....OBCCBBO",
-    "..ODDO...OBBBEBO",
-    "..ODDDO..OBCCBNO",
-    "..ODDDDOOBBBBBBO",
-    ".ODDDDDDOBBBBBBO",
-    ".ODDDDDDOBBBBBO.",
-    ".ODDDDDDDBBBBBO.",
-    ".ODDDDDDDBBBBBO.",
-    "..ODDDDDDBBBBBO.",
-    "..ODDDDDBBBBBO..",
-    "...OOOO...OOO...",
-    "................",
-]
+ROOT = Path(__file__).resolve().parent.parent
+ASSETS = ROOT / "PhotoClear" / "Assets.xcassets"
+SOURCE = Path(__file__).resolve().parent / "source_squirrel_logo.webp"
 
 
-def render_sprite():
-    """Rasterize the character map into a 16x16 RGBA image."""
-    if len(SPRITE) != GRID or any(len(row) != GRID for row in SPRITE):
-        raise SystemExit(
-            f"SPRITE must be {GRID}x{GRID}; got "
-            f"{len(SPRITE)} rows, widths={[len(r) for r in SPRITE]}"
+def write_json(path: Path, value) -> None:
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def artwork_without_border() -> Image.Image:
+    """Remove the low-saturation white area connected to the image edges."""
+    image = Image.open(SOURCE).convert("RGBA")
+    pixels = image.load()
+    removable = set()
+    queue = deque()
+
+    for x in range(image.width):
+        queue.extend(((x, 0), (x, image.height - 1)))
+    for y in range(image.height):
+        queue.extend(((0, y), (image.width - 1, y)))
+
+    while queue:
+        x, y = queue.popleft()
+        if (x, y) in removable or not (0 <= x < image.width and 0 <= y < image.height):
+            continue
+        r, g, b, _ = pixels[x, y]
+        _, saturation, value = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+        if saturation >= 0.35 or value <= 0.78:
+            continue
+        removable.add((x, y))
+        queue.extend(((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)))
+
+    for x, y in removable:
+        pixels[x, y] = (0, 0, 0, 0)
+    bounds = image.getbbox()
+    if bounds is None:
+        raise RuntimeError("supplied artwork became empty after border removal")
+    return image.crop(bounds)
+
+
+def main() -> None:
+    artwork = artwork_without_border()
+
+    icon_dir = ASSETS / "AppIcon.appiconset"
+    icon_dir.mkdir(parents=True, exist_ok=True)
+    icon_art = ImageOps.fit(artwork, (1024, 1024), method=Image.Resampling.LANCZOS)
+    icon = Image.new("RGBA", icon_art.size, "#f7b34d")
+    icon.alpha_composite(icon_art)
+    icon.convert("RGB").save(icon_dir / "icon-1024.png", optimize=True)
+    write_json(icon_dir / "Contents.json", {
+        "images": [{"filename": "icon-1024.png", "idiom": "universal", "platform": "ios", "size": "1024x1024"}],
+        "info": {"author": "xcode", "version": 1},
+    })
+
+    logo_dir = ASSETS / "SquirrelLogo.imageset"
+    logo_dir.mkdir(parents=True, exist_ok=True)
+    for scale, filename in ((1, "squirrel_logo.png"), (2, "squirrel_logo@2x.png"), (3, "squirrel_logo@3x.png")):
+        size = 48 * scale
+        ImageOps.fit(artwork, (size, size), method=Image.Resampling.LANCZOS).save(
+            logo_dir / filename, optimize=True
         )
-    img = Image.new("RGBA", (GRID, GRID), (0, 0, 0, 0))
-    px = img.load()
-    for y, row in enumerate(SPRITE):
-        for x, ch in enumerate(row):
-            if ch not in PALETTE:
-                raise SystemExit(f"unknown sprite char {ch!r} at ({x},{y})")
-            px[x, y] = PALETTE[ch]
-    return img
+    write_json(logo_dir / "Contents.json", {
+        "images": [
+            {"filename": "squirrel_logo.png", "idiom": "universal", "scale": "1x"},
+            {"filename": "squirrel_logo@2x.png", "idiom": "universal", "scale": "2x"},
+            {"filename": "squirrel_logo@3x.png", "idiom": "universal", "scale": "3x"},
+        ],
+        "info": {"author": "xcode", "version": 1},
+    })
 
-
-def ascii_preview(img):
-    """Print the sprite as text so the design can be checked without pixels."""
-    px = img.load()
-    rows = []
-    for y in range(img.height):
-        rows.append("".join(
-            PALETTE_CH.get(px[x, y], "?") for x in range(img.width)
-        ))
-    return "\n".join(rows)
-
-
-# reverse lookup so the preview round-trips
-PALETTE_CH = {v: k for k, v in PALETTE.items()}
-
-
-def upscale(img, factor):
-    """Integer NEAREST upscale keeps every pixel a crisp square."""
-    return img.resize((img.width * factor, img.height * factor), Image.NEAREST)
-
-
-def main():
-    sprite = render_sprite()
-
-    print(f"=== {GRID}x{GRID} sprite ===")
-    print(ascii_preview(sprite))
-
-    # distinct colors must survive upscale exactly (proves NEAREST, no blending)
-    src_colors = len(sprite.getcolors(maxcolors=1000) or [])
-
-    # ---- app icon: 16 -> 1024 (exact 64x), on an opaque background ----
-    icon_dir = os.path.join(ASSETS, "AppIcon.appiconset")
-    os.makedirs(icon_dir, exist_ok=True)
-    BG = (232, 241, 219, 255)      # matches the app's cream/green theme
-    icon = Image.new("RGBA", (GRID, GRID), BG)
-    icon.alpha_composite(sprite)
-    icon_big = upscale(icon, 1024 // GRID)
-    icon_big.convert("RGB").save(os.path.join(icon_dir, "icon-1024.png"))
-    with open(os.path.join(icon_dir, "Contents.json"), "w", encoding="utf-8") as h:
-        json.dump({
-            "images": [{"filename": "icon-1024.png", "idiom": "universal",
-                        "platform": "ios", "size": "1024x1024"}],
-            "info": {"author": "xcode", "version": 1},
-        }, h, indent=2)
-
-    # ---- in-app logo: transparent, 48 / 96 / 144 (exact 3x / 6x / 9x) ----
-    logo_dir = os.path.join(ASSETS, "SquirrelLogo.imageset")
-    os.makedirs(logo_dir, exist_ok=True)
-    for scale, filename in ((1, "squirrel_logo.png"), (2, "squirrel_logo@2x.png"),
-                            (3, "squirrel_logo@3x.png")):
-        upscale(sprite, 3 * scale).save(os.path.join(logo_dir, filename))
-    with open(os.path.join(logo_dir, "Contents.json"), "w", encoding="utf-8") as h:
-        json.dump({
-            "images": [
-                {"filename": "squirrel_logo.png", "idiom": "universal", "scale": "1x"},
-                {"filename": "squirrel_logo@2x.png", "idiom": "universal", "scale": "2x"},
-                {"filename": "squirrel_logo@3x.png", "idiom": "universal", "scale": "3x"},
-            ],
-            "info": {"author": "xcode", "version": 1},
-        }, h, indent=2)
-
-    # ---- verification: upscale must not have introduced new colors ----
-    big_colors = len(icon_big.getcolors(maxcolors=100000) or [])
-    bg_plus_sprite = src_colors          # bg is one flat color + sprite colors
-    ok = big_colors <= bg_plus_sprite + 1
-    print(f"\ncolors: sprite={src_colors}  upscaled_icon={big_colors}  "
-          f"(NEAREST keeps them equal-ish: {'OK' if ok else 'CHECK'})")
-    print("wrote app icon + logo to", ASSETS)
+    assert artwork.getbbox() == (0, 0, artwork.width, artwork.height)
+    print("Generated borderless app icon and in-app logo from approved squirrel artwork")
 
 
 if __name__ == "__main__":
