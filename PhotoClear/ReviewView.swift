@@ -7,7 +7,8 @@ struct ReviewView: View {
     @EnvironmentObject private var library: PhotoLibraryStore
     @Environment(\.dismiss) private var dismiss
     @State private var offset = CGSize.zero
-    @State private var history: [LibraryPhoto] = []
+    @State private var queue: [LibraryPhoto] = []
+    @State private var history: [(photo: LibraryPhoto, index: Int)] = []
     @State private var showTrash = false
     @State private var isAnimatingOut = false
     @State private var currentIndex = 0
@@ -26,7 +27,6 @@ struct ReviewView: View {
         if includeAllInSource { return pool }
         return pool.filter { !library.reviewed.contains($0.id) && !library.pendingDeletion.contains($0.id) }
     }
-    private var queue: [LibraryPhoto] { baseQueue }
     private var current: LibraryPhoto? {
         guard queue.indices.contains(currentIndex) else { return queue.first }
         return queue[currentIndex]
@@ -99,9 +99,11 @@ struct ReviewView: View {
                     actionButton("待清理", symbol: "trash", color: Color(red: 0.70, green: 0.39, blue: 0.30)) { markPending(photo, verticalDirection: -1) }
                     Button {
                         if let previous = history.popLast() {
-                            library.undoReview(previous)
+                            library.undoReview(previous.photo)
+                            let restoredIndex = min(previous.index, queue.count)
+                            queue.insert(previous.photo, at: restoredIndex)
+                            currentIndex = restoredIndex
                             reviewFeedback = "已撤销上一次操作"
-                            if let restoredIndex = queue.firstIndex(where: { $0.id == previous.id }) { currentIndex = restoredIndex }
                         }
                     } label: {
                         VStack(spacing: 8) {
@@ -125,6 +127,7 @@ struct ReviewView: View {
             .sheet(isPresented: $showCreateAlbum) { CreateAlbumView() }
             .onAppear {
                 library.migrateUnsureToUnreviewed()
+                queue = baseQueue
                 clampCurrentIndex()
                 refreshClassificationState(for: current)
                 prefetchUpcoming()
@@ -247,14 +250,7 @@ struct ReviewView: View {
         withAnimation(.easeOut(duration: 0.22)) {
             offset = CGSize(width: direction * 640, height: offset.height + 60)
         } completion: {
-            history.append(photo)
-            library.review(photo, keep: keep)
-            reviewFeedback = keep ? "已保留，可点撤销恢复" : "已加入待清理，可点撤销恢复"
-            clampCurrentIndex()
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) { offset = .zero }
-            isAnimatingOut = false
+            completeReview(photo, keep: keep)
         }
     }
 
@@ -265,14 +261,7 @@ struct ReviewView: View {
         withAnimation(.easeOut(duration: 0.22)) {
             offset = CGSize(width: offset.width * 0.2, height: verticalDirection * 640)
         } completion: {
-            history.append(photo)
-            library.review(photo, keep: false)
-            reviewFeedback = "已加入待清理，可点撤销恢复"
-            clampCurrentIndex()
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) { offset = .zero }
-            isAnimatingOut = false
+            completeReview(photo, keep: false)
         }
     }
 
@@ -283,15 +272,21 @@ struct ReviewView: View {
         withAnimation(.easeOut(duration: 0.22)) {
             offset = CGSize(width: offset.width * 0.2, height: 640)
         } completion: {
-            history.append(photo)
-            library.review(photo, keep: true)
-            reviewFeedback = "已保留，可点撤销恢复"
-            clampCurrentIndex()
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) { offset = .zero }
-            isAnimatingOut = false
+            completeReview(photo, keep: true)
         }
+    }
+
+    private func completeReview(_ photo: LibraryPhoto, keep: Bool) {
+        let reviewedIndex = queue.firstIndex(where: { $0.id == photo.id }) ?? currentIndex
+        history.append((photo, reviewedIndex))
+        library.review(photo, keep: keep)
+        if queue.indices.contains(reviewedIndex) { queue.remove(at: reviewedIndex) }
+        reviewFeedback = keep ? "已保留，可点撤销恢复" : "已加入待清理，可点撤销恢复"
+        clampCurrentIndex()
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { offset = .zero }
+        isAnimatingOut = false
     }
 
     private func clampCurrentIndex() {
