@@ -126,6 +126,7 @@ struct WelcomeView: View {
 struct DashboardView: View {
     @EnvironmentObject private var library: PhotoLibraryStore
     @State private var showReview = false
+    @State private var randomReview: RandomReview?
     @State private var showTrash = false
     @State private var monthReview: MonthReview?
     @State private var showAllMonths = false
@@ -211,6 +212,7 @@ struct DashboardView: View {
             }.padding(.horizontal, 24).padding(.bottom, 24)
         }.background(Palette.background).foregroundStyle(Palette.green)
             .fullScreenCover(isPresented: $showReview) { ReviewView() }
+            .fullScreenCover(item: $randomReview) { ReviewView(source: $0.photos) }
             .fullScreenCover(item: $monthReview) { ReviewView(source: $0.month.photos) }
             .sheet(isPresented: $showTrash) { PendingDeletionView() }
             .sheet(isPresented: $showCreateAlbum) { CreateAlbumView() }
@@ -334,14 +336,23 @@ struct DashboardView: View {
                 Image(systemName: "leaf").font(.system(size: 41, weight: .ultraLight)).foregroundStyle(Palette.lime)
                     .rotationEffect(.degrees(-20))
             }
-            Button { showReview = true } label: {
-                HStack {
-                    Text("开始整理").font(.system(size: 14, weight: .semibold))
-                    Spacer()
-                    Image(systemName: "arrow.right")
-                }.padding(15).foregroundStyle(Palette.green)
-                    .background(Palette.lime, in: RoundedRectangle(cornerRadius: 12))
+            HStack(spacing: 10) {
+                Button { showReview = true } label: {
+                    Label("从最新开始", systemImage: "arrow.right")
+                        .frame(maxWidth: .infinity)
+                }
+                Button {
+                    randomReview = RandomReview(photos: library.unreviewed.shuffled())
+                } label: {
+                    Label("随机整理", systemImage: "shuffle")
+                        .frame(maxWidth: .infinity)
+                }
             }
+            .font(.system(size: 13, weight: .semibold))
+            .padding(15)
+            .foregroundStyle(Palette.green)
+            .background(Palette.lime, in: RoundedRectangle(cornerRadius: 12))
+            .disabled(library.unreviewed.isEmpty)
         }.padding(23).foregroundStyle(.white).background(Palette.green, in: RoundedRectangle(cornerRadius: 25))
     }
 
@@ -473,6 +484,11 @@ struct RenameAlbumView: View {
         guard !cleanedName.isEmpty, !hasDuplicateName, !isUnchanged, !library.isWorking else { return }
         Task { if await library.renameAlbum(album, to: name) { dismiss() } }
     }
+}
+
+private struct RandomReview: Identifiable {
+    let id = UUID()
+    let photos: [LibraryPhoto]
 }
 
 private struct MonthReview: Identifiable {
