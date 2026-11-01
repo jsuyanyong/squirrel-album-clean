@@ -1,0 +1,22 @@
+.DS_Store
+DerivedData/
+build/
+build-device/
+*.xcuserstate
+xcuserdata/
+
+__pycache__/
+*.pyc
+scripts/_preview_icon.png
+
+# Keep local handoff, task data and credentials out of version control.
+.handoff-backups/
+attachments/
+task/
+.env
+.env.*
+!.env.example
+*.p8
+*.p12
+*.pem
+*.mobileprovision
