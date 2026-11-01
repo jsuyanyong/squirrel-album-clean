@@ -1,0 +1,49 @@
+name: iOS CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: iOS Simulator Build
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Validate project metadata
+        run: |
+          plutil -lint PhotoClear/Info.plist PhotoClear.xcodeproj/project.pbxproj
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import xml.etree.ElementTree as ET
+          ET.parse('PhotoClear.xcodeproj/xcshareddata/xcschemes/PhotoClear.xcscheme')
+          for path in pathlib.Path('PhotoClear/Assets.xcassets').rglob('Contents.json'):
+              json.loads(path.read_text())
+          PY
+      - name: Build iOS simulator application
+        run: |
+          set -o pipefail
+          xcodebuild -version
+          xcodebuild \
+            -project PhotoClear.xcodeproj \
+            -scheme PhotoClear \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/PhotoClear-DerivedData" \
+            CODE_SIGNING_ALLOWED=NO build
