@@ -20,6 +20,7 @@ struct ReviewView: View {
     @State private var tagFeedbackIsError = false
     @State private var isClassifying = false
     @State private var showCreateAlbum = false
+    @State private var zoomedPhoto: LibraryPhoto?
     var source: [LibraryPhoto]? = nil
     var includeAllInSource = false
     private var baseQueue: [LibraryPhoto] {
@@ -125,6 +126,7 @@ struct ReviewView: View {
         }.padding(.horizontal, 12).foregroundStyle(Palette.green).background(Palette.background)
             .sheet(isPresented: $showTrash) { PendingDeletionView() }
             .sheet(isPresented: $showCreateAlbum) { CreateAlbumView() }
+            .fullScreenCover(item: $zoomedPhoto) { ZoomablePhotoView(photo: $0) }
             .onAppear {
                 library.migrateUnsureToUnreviewed()
                 queue = baseQueue
@@ -177,6 +179,21 @@ struct ReviewView: View {
                     Text("演示模式不包含视频播放")
                         .font(.system(size: 12)).padding(12).foregroundStyle(.white)
                         .background(.black.opacity(0.6), in: Capsule())
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if !photo.isVideo {
+                    Button { zoomedPhoto = photo } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(width: 44, height: 44)
+                            .foregroundStyle(.white)
+                            .background(.black.opacity(0.55), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(16)
+                    .disabled(isAnimatingOut)
+                    .accessibilityLabel("放大查看照片")
                 }
             }
             .overlay(alignment: .top) {
@@ -414,6 +431,83 @@ struct ReviewView: View {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
             }
         }
+    }
+}
+
+private struct ZoomablePhotoView: View {
+    @Environment(\.dismiss) private var dismiss
+    let photo: LibraryPhoto
+    @State private var scale: CGFloat = 1
+    @State private var lastScale: CGFloat = 1
+    @State private var translation = CGSize.zero
+    @State private var lastTranslation = CGSize.zero
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            PhotoThumbnail(photo: photo, large: true, showsFullImage: true)
+                .scaleEffect(scale)
+                .offset(translation)
+                .gesture(magnifyGesture.simultaneously(with: panGesture))
+                .onTapGesture(count: 2) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                        if scale > 1 {
+                            scale = 1
+                            lastScale = 1
+                            translation = .zero
+                            lastTranslation = .zero
+                        } else {
+                            scale = 2
+                            lastScale = 2
+                        }
+                    }
+                }
+            VStack {
+                HStack {
+                    Spacer()
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 17, weight: .semibold))
+                            .frame(width: 44, height: 44)
+                            .foregroundStyle(.white)
+                            .background(.black.opacity(0.55), in: Circle())
+                    }
+                    .accessibilityLabel("关闭放大查看")
+                }
+                Spacer()
+                Text("双指缩放 · 双击复原")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .padding(.horizontal, 14).padding(.vertical, 9)
+                    .background(.black.opacity(0.55), in: Capsule())
+            }
+            .padding(16)
+        }
+        .statusBarHidden()
+    }
+
+    private var magnifyGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in scale = min(max(lastScale * value.magnification, 1), 5) }
+            .onEnded { _ in
+                lastScale = scale
+                if scale == 1 {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                        translation = .zero
+                        lastTranslation = .zero
+                    }
+                }
+            }
+    }
+
+    private var panGesture: some Gesture {
+        DragGesture(minimumDistance: 4)
+            .onChanged { value in
+                guard scale > 1 else { return }
+                translation = CGSize(width: lastTranslation.width + value.translation.width,
+                                     height: lastTranslation.height + value.translation.height)
+            }
+            .onEnded { _ in lastTranslation = translation }
     }
 }
 
